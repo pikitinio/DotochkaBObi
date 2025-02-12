@@ -1,1 +1,1 @@
-worker: python Dota_bot.py
+worker: python -m aiogram
