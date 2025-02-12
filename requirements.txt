@@ -2,3 +2,4 @@ aiogram
 requests
 asyncio
 gunicorn
+dotenv
