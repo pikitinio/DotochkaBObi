@@ -5,7 +5,6 @@ from aiogram import Bot, Dispatcher, types
 from aiogram.types import (
     ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardMarkup, InlineKeyboardButton
 )
-from aiogram.utils import executor
 
 # 🔹 Твой токен Telegram-бота
 TOKEN = "7729441906:AAG0dvJAK3uhPWFNPp6sIFUjVo0w0mjVG60"
@@ -228,6 +227,8 @@ async def handle_activity(message: types.Message):
 
     
 # 🔹 Запуск бота
+async def main():
+    await dp.start_polling(bot)
+
 if __name__ == "__main__":
-    logging.basicConfig(level=logging.INFO)
-    executor.start_polling(dp, skip_updates=True)
+    asyncio.run(main())
