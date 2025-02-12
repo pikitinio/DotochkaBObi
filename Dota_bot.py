@@ -129,14 +129,8 @@ async def user_stats_cmd(message: types.Message):
     stats = await get_user_winrates(steam_id)
     await message.answer(stats)
 
-
-async def remove_webhook():
-    await bot.delete_webhook(drop_pending_updates=True)
-
-
 # 🔹 Запуск бота
 async def main():
-    await remove_webhook()  # Отключаем webhook перед запуском
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
