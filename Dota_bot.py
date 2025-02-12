@@ -11,7 +11,7 @@ TOKEN = "7729441906:AAG0dvJAK3uhPWFNPp6sIFUjVo0w0mjVG60"
 HOST_ID = 1373194812  # 🔥 Укажи здесь свой Telegram ID, чтобы ты был админом
 
 bot = Bot(token=TOKEN)
-dp = Dispatcher(bot)
+dp = Dispatcher()
 
 # 🔹 База пользователей (временная, лучше потом заменить на БД)
 user_data = {}
@@ -228,7 +228,7 @@ async def handle_activity(message: types.Message):
     
 # 🔹 Запуск бота
 async def main():
-    await dp.start_polling(bot)
+    await dp.start_polling(bot=bot)
 
 if __name__ == "__main__":
     asyncio.run(main())
