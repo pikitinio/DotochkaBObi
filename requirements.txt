@@ -1,9 +1,0 @@
-aiogram
-requests
-asyncio
-gunicorn
-python-dotenv
-dotenv
-pip>=23.0.0
-setuptools>=65.0.0
-wheel
