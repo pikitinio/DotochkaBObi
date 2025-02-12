@@ -8,7 +8,7 @@ from aiogram.types import (
 from aiogram.utils import executor
 
 # 🔹 Твой токен Telegram-бота
-TOKEN = "ТОКЕН_ТВОЕГО_БОТА"
+TOKEN = "7729441906:AAG0dvJAK3uhPWFNPp6sIFUjVo0w0mjVG60"
 HOST_ID = 1373194812  # 🔥 Укажи здесь свой Telegram ID, чтобы ты был админом
 
 bot = Bot(token=TOKEN)
