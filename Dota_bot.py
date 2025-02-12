@@ -7,13 +7,14 @@ from aiogram.types import (
     ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardMarkup, InlineKeyboardButton
 )
 from dotenv import load_dotenv
+from google.generativeai import configure, generate_text  # Подключаем Gemini API
 
 # 🔹 Загружаем переменные окружения
 load_dotenv()
 
 TOKEN = os.getenv("BOT_TOKEN")  # Telegram Bot Token
-OPENDOTA_API_KEY = os.getenv("OPENDOTA_API_KEY")  # OpenDota API Key (если есть)
-DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY")  # DeepSeek API Key (если есть)
+OPENDOTA_API_KEY = os.getenv("OPENDOTA_API_KEY")  # OpenDota API Key
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")  # Google Gemini API Key
 HOST_ID = int(os.getenv("HOST_ID", "1373194812"))  # ID админа бота
 
 if not TOKEN:
@@ -22,123 +23,114 @@ if not TOKEN:
 bot = Bot(token=TOKEN)
 dp = Dispatcher(bot=bot)
 
-# 🔹 База пользователей (временная, лучше потом заменить на БД)
+# 🔹 Настройка Gemini API
+configure(api_key=GEMINI_API_KEY)
+
+def ask_gemini(prompt):
+    response = generate_text(prompt=prompt)
+    return response.text if response else "Не удалось получить ответ от нейросети."
+
+# 🔹 База пользователей (сохраняется в памяти)
 user_data = {}
 chat_history = {}
 
-# 🔹 Клавиатура с главными кнопками
+# 🔹 Основные кнопки (клавиатура + инлайн)
 main_menu = ReplyKeyboardMarkup(resize_keyboard=True)
 main_menu.add(
     KeyboardButton("📊 Статистика"),
     KeyboardButton("🎯 Подбор героя"),
-    KeyboardButton("💬 Чат с ИИ")
+    KeyboardButton("💬 Чат с ИИ"),
+    KeyboardButton("🔥 Текущая мета"),
+    KeyboardButton("⚙️ Настройки")
+)
+help_menu = InlineKeyboardMarkup()
+help_menu.add(
+    InlineKeyboardButton("📌 Список команд", callback_data="help"),
+    InlineKeyboardButton("🔙 В главное меню", callback_data="menu")
 )
 
-# 🔹 Инлайн-клавиатура для статистики
-stats_menu = InlineKeyboardMarkup()
-stats_menu.add(
-    InlineKeyboardButton("🔥 Топ-5 лучших героев", callback_data="top_5"),
-    InlineKeyboardButton("💀 Топ-5 худших героев", callback_data="worst_5"),
-)
-stats_menu.add(InlineKeyboardButton("📌 Текущая мета", callback_data="meta"))
+# 🔹 Автоотключение через 30 минут
+async def shutdown_timer():
+    await asyncio.sleep(1800)
+    await bot.send_message(HOST_ID, "⏳ Бот отключается из-за бездействия. Используйте /start для перезапуска.")
+    await bot.session.close()
+    exit()
 
-# 🔹 Старт бота
 @dp.message_handler(commands=['start'])
 async def start_cmd(message: types.Message):
+    asyncio.create_task(shutdown_timer())  # Запускаем таймер отключения
     await message.answer("Привет! Этот бот поможет тебе с Dota 2. Выбери действие:", reply_markup=main_menu)
 
-# 🔹 Запрос Steam ID у пользователя
-@dp.message_handler(lambda message: message.text == "📊 Статистика")
-async def ask_steam_id(message: types.Message):
-    await message.answer("Отправь свой **Steam ID** или ссылку на профиль, чтобы я мог получить твою статистику.")
+@dp.message_handler(commands=['help'])
+async def help_cmd(message: types.Message):
+    await message.answer("ℹ️ Доступные команды:", reply_markup=help_menu)
 
-# 🔹 Обработка Steam ID
+@dp.callback_query_handler(lambda c: c.data == "help")
+async def help_callback(callback_query: types.CallbackQuery):
+    await bot.answer_callback_query(callback_query.id)
+    await bot.send_message(callback_query.from_user.id, "ℹ️ Вот список команд:", reply_markup=help_menu)
+
+@dp.callback_query_handler(lambda c: c.data == "menu")
+async def menu_callback(callback_query: types.CallbackQuery):
+    await bot.answer_callback_query(callback_query.id)
+    await bot.send_message(callback_query.from_user.id, "🏠 Главное меню:", reply_markup=main_menu)
+
+# 🔹 Запрос Steam ID у пользователя
+@dp.message_handler(lambda message: message.text == "⚙️ Настройки")
+async def settings_cmd(message: types.Message):
+    await message.answer("🔹 Введите ваш Steam ID для работы с ботом:")
+
 @dp.message_handler(lambda message: message.text.isdigit())
 async def save_steam_id(message: types.Message):
-    steam_id = message.text
-    user_data[message.from_user.id] = {"steam_id": steam_id}
-    await message.answer("Steam ID сохранён! Выбери, что тебе нужно:", reply_markup=stats_menu)
+    user_data[message.from_user.id] = {"steam_id": message.text}
+    await message.answer("✅ Ваш Steam ID сохранён!")
 
-# 🔹 Получение статистики с OpenDota
-def get_dota_stats(steam_id):
-    url = f"https://api.opendota.com/api/players/{steam_id}/heroes"
-    headers = {"Authorization": f"Bearer {OPENDOTA_API_KEY}"} if OPENDOTA_API_KEY else {}
-    response = requests.get(url, headers=headers)
-
-    if response.status_code != 200:
-        return None
-    return response.json()
-
-# 🔹 Обработчик инлайн-кнопок (топ-5 лучших и худших героев)
-@dp.callback_query_handler(lambda call: call.data in ["top_5", "worst_5"])
-async def handle_stats_buttons(call: types.CallbackQuery):
-    user_id = call.from_user.id
-    if user_id not in user_data:
-        await call.message.answer("Ты не указал Steam ID! Отправь его сначала.")
-        return
-
-    steam_id = user_data[user_id]["steam_id"]
-    stats = get_dota_stats(steam_id)
-    if not stats:
-        await call.message.answer("Ошибка при получении статистики.")
-        return
-
-    if call.data == "top_5":
-        top_5 = sorted(stats, key=lambda x: x['win'] / x['games'], reverse=True)[:5]
-        result = "\n".join([f"{hero['hero_id']} – {hero['win']}/{hero['games']} побед" for hero in top_5])
-        await call.message.answer(f"🔥 **Топ-5 лучших героев:**\n{result}")
-
-    elif call.data == "worst_5":
-        worst_5 = sorted(stats, key=lambda x: x['win'] / x['games'])[:5]
-        result = "\n".join([f"{hero['hero_id']} – {hero['win']}/{hero['games']} побед" for hero in worst_5])
-        await call.message.answer(f"💀 **Топ-5 худших героев:**\n{result}")
-
-# 🔹 Чат с ИИ через DeepSeek API
-def deepseek_chat(text):
-    if not DEEPSEEK_API_KEY:
-        return "🤖 [ИИ]: API-ключ отсутствует. Подключите DeepSeek API для работы ИИ."
-
-    url = "https://api.deepseek.com/chat"
-    headers = {"Authorization": f"Bearer {DEEPSEEK_API_KEY}", "Content-Type": "application/json"}
-    data = {"prompt": text}
-
-    response = requests.post(url, json=data, headers=headers)
-    if response.status_code != 200:
-        return "🤖 [ИИ]: Ошибка при обработке запроса."
+# 🔹 Анализ текущей меты
+async def get_meta():
+    url = "https://api.opendota.com/api/heroes"
+    response = requests.get(url).json()
+    if not response:
+        return "⚠️ Не удалось получить информацию о мете."
     
-    return response.json().get("response", "🤖 [ИИ]: Ошибка обработки ответа.")
+    meta_heroes = sorted(response, key=lambda x: x.get('pro_win', 0) / max(1, x.get('pro_pick', 1)), reverse=True)[:10]
+    meta_text = "\n".join([f"🔥 {hero['localized_name']} - {hero['pro_win']}/{hero['pro_pick']} игр" for hero in meta_heroes])
+    
+    return f"🔥 Текущая мета (Топ 10 героев):\n{meta_text}"
 
-@dp.message_handler(lambda message: message.text == "💬 Чат с ИИ")
-async def chat_with_ai(message: types.Message):
-    await message.answer("Отправь мне сообщение, и я попробую ответить как ИИ.")
+@dp.message_handler(lambda message: message.text == "🔥 Текущая мета")
+async def meta_cmd(message: types.Message):
+    meta = await get_meta()
+    await message.answer(meta)
 
-@dp.message_handler()
-async def ai_response(message: types.Message):
+# 🔹 Анализ винрейта пользователя
+async def get_user_winrates(steam_id):
+    url = f"https://api.opendota.com/api/players/{steam_id}/heroes"
+    response = requests.get(url).json()
+    if not response:
+        return "⚠️ Не удалось получить информацию о героях пользователя."
+    
+    best_heroes = sorted(response, key=lambda x: x['win'] / max(1, x['games']), reverse=True)[:5]
+    worst_heroes = sorted(response, key=lambda x: x['win'] / max(1, x['games']))[:5]
+    
+    best_text = "\n".join([f"✅ {hero['hero_id']} - {hero['win']}/{hero['games']} игр" for hero in best_heroes])
+    worst_text = "\n".join([f"❌ {hero['hero_id']} - {hero['win']}/{hero['games']} игр" for hero in worst_heroes])
+    
+    return f"📊 Ваши лучшие герои:\n{best_text}\n\n📉 Ваши худшие герои:\n{worst_text}"
+
+@dp.message_handler(lambda message: message.text == "📊 Статистика")
+async def user_stats_cmd(message: types.Message):
     user_id = message.from_user.id
-    chat_history.setdefault(user_id, []).append(message.text)  # Сохраняем историю чатов
-    response = deepseek_chat(message.text)
-    await message.answer(response)
-
-# 🔹 Завершение работы при неактивности 30 минут
-inactive_time = 1800  # 30 минут в секундах
-last_activity = None
-
-async def shutdown_if_inactive():
-    global last_activity
-    while True:
-        await asyncio.sleep(300)
-        if last_activity and (asyncio.get_event_loop().time() - last_activity > inactive_time):
-            print("💤 Бот не используется 30 минут. Завершаю работу...")
-            exit(0)
-
-@dp.message_handler()
-async def handle_activity(message: types.Message):
-    global last_activity
-    last_activity = asyncio.get_event_loop().time()
+    if user_id not in user_data or "steam_id" not in user_data[user_id]:
+        await message.answer("❗ Сначала укажите ваш Steam ID в настройках!")
+        return
+    
+    steam_id = user_data[user_id]["steam_id"]
+    stats = await get_user_winrates(steam_id)
+    await message.answer(stats)
 
 # 🔹 Запуск бота
 async def main():
-    await dp.start_polling(bot)
+    await dp.start_polling()
 
 if __name__ == "__main__":
     asyncio.run(main())
