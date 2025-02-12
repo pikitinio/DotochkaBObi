@@ -7,7 +7,7 @@ from aiogram.types import (
     ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardMarkup, InlineKeyboardButton
 )
 from dotenv import load_dotenv
-from google.generativeai import configure, generate_text  # Подключаем Gemini API
+import google.generativeai as genai  # Подключаем Gemini API
 
 # 🔹 Загружаем переменные окружения
 load_dotenv()
@@ -21,13 +21,14 @@ if not TOKEN:
     raise ValueError("⚠️ BOT_TOKEN не задан! Укажите его в переменных окружения.")
 
 bot = Bot(token=TOKEN)
-dp = Dispatcher(bot=bot)
+dp = Dispatcher()
 
 # 🔹 Настройка Gemini API
-configure(api_key=GEMINI_API_KEY)
+genai.configure(api_key=GEMINI_API_KEY)
+model = genai.GenerativeModel("gemini-pro")
 
 def ask_gemini(prompt):
-    response = generate_text(prompt=prompt)
+    response = model.generate_content(prompt)
     return response.text if response else "Не удалось получить ответ от нейросети."
 
 # 🔹 База пользователей (сохраняется в памяти)
@@ -130,7 +131,7 @@ async def user_stats_cmd(message: types.Message):
 
 # 🔹 Запуск бота
 async def main():
-    await dp.start_polling()
+    await dp.start_polling(bot)
 
 if __name__ == "__main__":
     asyncio.run(main())
