@@ -21,7 +21,7 @@ if not TOKEN:
     raise ValueError("⚠️ BOT_TOKEN не задан! Укажите его в переменных окружения.")
 
 bot = Bot(token=TOKEN)
-dp = Dispatcher()
+dp = Dispatcher(bot=bot)
 
 # 🔹 Настройка Gemini API
 genai.configure(api_key=GEMINI_API_KEY)
