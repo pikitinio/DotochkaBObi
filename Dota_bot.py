@@ -88,7 +88,7 @@ async def save_steam_id(message: types.Message):
 
 # 🔹 Анализ текущей меты
 async def get_meta():
-    url = "https://api.opendota.com/api/heroes"
+    url = "https://api.opendota.com/api/matches/271145478?api_key={OPENDOTA_API_KEY}"
     response = requests.get(url).json()
     if not response:
         return "⚠️ Не удалось получить информацию о мете."
