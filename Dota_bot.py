@@ -81,6 +81,8 @@ async def menu_callback(callback_query: types.CallbackQuery):
 async def settings_cmd(message: types.Message):
     await message.answer("🔹 Введите ваш Steam ID для работы с ботом:")
 
+
+
 @dp.message_handler(lambda message: message.text.isdigit())
 async def save_steam_id(message: types.Message):
     user_data[message.from_user.id] = {"steam_id": message.text}
