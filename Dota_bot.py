@@ -1,139 +1,115 @@
-import os
 import asyncio
-import logging
+import os
+import time
 import requests
+import google.generativeai as genai
 from aiogram import Bot, Dispatcher, types
-from aiogram.types import (
-    ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardMarkup, InlineKeyboardButton
-)
+from aiogram.contrib.fsm_storage.memory import MemoryStorage
+from aiogram.types import ReplyKeyboardMarkup, KeyboardButton
+from aiogram.utils import executor
 from dotenv import load_dotenv
-import google.generativeai as genai  # Подключаем Gemini API
 
-# 🔹 Загружаем переменные окружения
+# Загружаем API-ключи
 load_dotenv()
+BOT_TOKEN = os.getenv("BOT_TOKEN")
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+OPENDOTA_API_KEY = os.getenv("OPENDOTA_API_KEY")
 
-TOKEN = os.getenv("BOT_TOKEN")  # Telegram Bot Token
-OPENDOTA_API_KEY = os.getenv("OPENDOTA_API_KEY")  # OpenDota API Key
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")  # Google Gemini API Key
-HOST_ID = int(os.getenv("HOST_ID", "1373194812"))  # ID админа бота
+# Инициализация бота и диспетчера
+bot = Bot(token=BOT_TOKEN)
+dp = Dispatcher(bot, storage=MemoryStorage())
 
-if not TOKEN:
-    raise ValueError("⚠️ BOT_TOKEN не задан! Укажите его в переменных окружения.")
-
-bot = Bot(token=TOKEN)
-dp = Dispatcher(bot=bot)
-
-# 🔹 Настройка Gemini API
+# Инициализация Google Gemini API
 genai.configure(api_key=GEMINI_API_KEY)
 model = genai.GenerativeModel("gemini-pro")
 
+# Список пользователей, которые активировали бота (для автоотключения)
+active_users = {}
+INACTIVITY_LIMIT = 1800  # 30 минут
+
+
+# Функция для проверки активности пользователей
+async def check_activity():
+    while True:
+        current_time = time.time()
+        for user_id in list(active_users.keys()):
+            if current_time - active_users[user_id] > INACTIVITY_LIMIT:
+                await bot.send_message(user_id, "Бот выключается из-за бездействия. Напишите команду, чтобы снова запустить его.")
+                del active_users[user_id]
+        await asyncio.sleep(60)
+
+
+# Главное меню
+def main_menu():
+    keyboard = ReplyKeyboardMarkup(resize_keyboard=True)
+    keyboard.add(KeyboardButton("🔍 Анализ профиля"), KeyboardButton("🎮 Помощь с пиком"))
+    return keyboard
+
+
+# Получение данных о профиле через OpenDota API
+def get_player_data(steam_id):
+    url = f"https://api.opendota.com/api/players/{steam_id}?api_key={OPENDOTA_API_KEY}"
+    response = requests.get(url)
+    if response.status_code == 200:
+        return response.json()
+    return None
+
+
+# Анализ винрейта героев
+def get_winrate_heroes(steam_id, top=True):
+    url = f"https://api.opendota.com/api/players/{steam_id}/heroes?api_key={OPENDOTA_API_KEY}"
+    response = requests.get(url)
+    if response.status_code == 200:
+        heroes = response.json()
+        sorted_heroes = sorted(heroes, key=lambda x: x["win"] / x["games"], reverse=top)
+        return sorted_heroes[:5]
+    return None
+
+
+# Функция взаимодействия с Google Gemini API
 def ask_gemini(prompt):
     response = model.generate_content(prompt)
-    return response.text if response else "Не удалось получить ответ от нейросети."
-
-# 🔹 База пользователей (сохраняется в памяти)
-user_data = {}
-chat_history = {}
-
-# 🔹 Основные кнопки (клавиатура + инлайн)
-main_menu = ReplyKeyboardMarkup(resize_keyboard=True)
-main_menu.add(
-    KeyboardButton("📊 Статистика"),
-    KeyboardButton("🎯 Подбор героя"),
-    KeyboardButton("💬 Чат с ИИ"),
-    KeyboardButton("🔥 Текущая мета"),
-    KeyboardButton("⚙️ Настройки")
-)
-help_menu = InlineKeyboardMarkup()
-help_menu.add(
-    InlineKeyboardButton("📌 Список команд", callback_data="help"),
-    InlineKeyboardButton("🔙 В главное меню", callback_data="menu")
-)
-
-# 🔹 Автоотключение через 30 минут
-async def shutdown_timer():
-    await asyncio.sleep(1800)
-    await bot.send_message(HOST_ID, "⏳ Бот отключается из-за бездействия. Используйте /start для перезапуска.")
-    await bot.session.close()
-    exit()
-
-@dp.message_handler(commands=['start'])
-async def start_cmd(message: types.Message):
-    asyncio.create_task(shutdown_timer())  # Запускаем таймер отключения
-    await message.answer("Привет! Этот бот поможет тебе с Dota 2. Выбери действие:", reply_markup=main_menu)
-
-@dp.message_handler(commands=['help'])
-async def help_cmd(message: types.Message):
-    await message.answer("ℹ️ Доступные команды:", reply_markup=help_menu)
-
-@dp.callback_query_handler(lambda c: c.data == "help")
-async def help_callback(callback_query: types.CallbackQuery):
-    await bot.answer_callback_query(callback_query.id)
-    await bot.send_message(callback_query.from_user.id, "ℹ️ Вот список команд:", reply_markup=help_menu)
-
-@dp.callback_query_handler(lambda c: c.data == "menu")
-async def menu_callback(callback_query: types.CallbackQuery):
-    await bot.answer_callback_query(callback_query.id)
-    await bot.send_message(callback_query.from_user.id, "🏠 Главное меню:", reply_markup=main_menu)
-
-# 🔹 Запрос Steam ID у пользователя
-@dp.message_handler(lambda message: message.text == "⚙️ Настройки")
-async def settings_cmd(message: types.Message):
-    await message.answer("🔹 Введите ваш Steam ID для работы с ботом:")
+    return response.text
 
 
-
-@dp.message_handler(lambda message: message.text.isdigit())
-async def save_steam_id(message: types.Message):
-    user_data[message.from_user.id] = {"steam_id": message.text}
-    await message.answer("✅ Ваш Steam ID сохранён!")
-
-# 🔹 Анализ текущей меты
-async def get_meta():
-    url = "https://api.opendota.com/api/matches/271145478?api_key=cbc373e5-c1aa-466e-83c4-529d36f040e8"
-    response = requests.get(url).json()
-    if not response:
-        return "⚠️ Не удалось получить информацию о мете."
-    
-    meta_heroes = sorted(response, key=lambda x: x.get('pro_win', 0) / max(1, x.get('pro_pick', 1)), reverse=True)[:10]
-    meta_text = "\n".join([f"🔥 {hero['localized_name']} - {hero['pro_win']}/{hero['pro_pick']} игр" for hero in meta_heroes])
-    
-    return f"🔥 Текущая мета (Топ 10 героев):\n{meta_text}"
-
-@dp.message_handler(lambda message: message.text == "🔥 Текущая мета")
-async def meta_cmd(message: types.Message):
-    meta = await get_meta()
-    await message.answer(meta)
-
-# 🔹 Анализ винрейта пользователя
-async def get_user_winrates(steam_id):
-    url = f"https://api.opendota.com/api/players/{steam_id}/heroes"
-    response = requests.get(url).json()
-    if not response:
-        return "⚠️ Не удалось получить информацию о героях пользователя."
-    
-    best_heroes = sorted(response, key=lambda x: x['win'] / max(1, x['games']), reverse=True)[:5]
-    worst_heroes = sorted(response, key=lambda x: x['win'] / max(1, x['games']))[:5]
-    
-    best_text = "\n".join([f"✅ {hero['hero_id']} - {hero['win']}/{hero['games']} игр" for hero in best_heroes])
-    worst_text = "\n".join([f"❌ {hero['hero_id']} - {hero['win']}/{hero['games']} игр" for hero in worst_heroes])
-    
-    return f"📊 Ваши лучшие герои:\n{best_text}\n\n📉 Ваши худшие герои:\n{worst_text}"
-
-@dp.message_handler(lambda message: message.text == "📊 Статистика")
-async def user_stats_cmd(message: types.Message):
+# Обработчик команд
+@dp.message_handler(commands=["start"])
+async def start(message: types.Message):
     user_id = message.from_user.id
-    if user_id not in user_data or "steam_id" not in user_data[user_id]:
-        await message.answer("❗ Сначала укажите ваш Steam ID в настройках!")
-        return
-    
-    steam_id = user_data[user_id]["steam_id"]
-    stats = await get_user_winrates(steam_id)
-    await message.answer(stats)
+    active_users[user_id] = time.time()
+    await message.answer("Привет! Я Dota 2 бот с нейросетью. Чем могу помочь?", reply_markup=main_menu())
 
-# 🔹 Запуск бота
-async def main():
-    await dp.start_polling(bot)
 
+# Обработчик сообщений
+@dp.message_handler(content_types=types.ContentType.TEXT)
+async def handle_message(message: types.Message):
+    user_id = message.from_user.id
+    active_users[user_id] = time.time()
+
+    user_text = message.text.lower()
+
+    # Обрабатываем запрос через Google Gemini
+    response = ask_gemini(f"Пользователь спрашивает: {user_text}. Какая команда ему нужна?")
+
+    if "анализ профиля" in response:
+        await message.answer("Введите ваш Steam ID:")
+    elif "помощь с пиком" in response:
+        await message.answer("Введите выбранных героев и вашу роль:")
+    elif "лучшие герои" in response:
+        await message.answer("Введите ваш Steam ID, чтобы узнать 5 лучших героев по винрейту.")
+    elif "худшие герои" in response:
+        await message.answer("Введите ваш Steam ID, чтобы узнать 5 худших героев по винрейту.")
+    elif "текущая мета" in response:
+        await message.answer("Укажите позицию, и я покажу 10 лучших героев на ней.")
+    else:
+        await message.answer("Не понял ваш запрос. Попробуйте переформулировать.")
+
+
+# Запуск проверки активности
+async def on_startup(dp):
+    asyncio.create_task(check_activity())
+
+
+# Запуск бота
 if __name__ == "__main__":
-    asyncio.run(main())
+    executor.start_polling(dp, on_startup=on_startup)
