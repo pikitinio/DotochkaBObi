@@ -33,7 +33,7 @@ async def get_gemini_response(prompt: str) -> str:
             else:
                 return f"Ошибка API: {response.status}"
 
-@dp.message(CommandStart())
+@dp.message(CommandStart("start"))
 async def start_handler(message: Message):
     await message.answer("Привет! Отправь мне любое сообщение, и я передам его нейросети.")
 
