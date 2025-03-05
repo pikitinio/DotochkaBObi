@@ -1,115 +1,50 @@
-import asyncio
 import os
-import time
-import requests
-import google.generativeai as genai
+import logging
+import asyncio
 from aiogram import Bot, Dispatcher, types
-from aiogram.contrib.fsm_storage.memory import MemoryStorage
-from aiogram.types import ReplyKeyboardMarkup, KeyboardButton
-from aiogram.utils import executor
-from dotenv import load_dotenv
+from aiogram.filters import CommandStart
+from aiogram.types import Message
+import aiohttp
 
-# Загружаем API-ключи
-load_dotenv()
+# Загружаем переменные окружения
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
-OPENDOTA_API_KEY = os.getenv("OPENDOTA_API_KEY")
+GEMINI_API_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:generateText"
 
-# Инициализация бота и диспетчера
+# Настройка логирования
+logging.basicConfig(level=logging.INFO)
+
+# Создаем бота и диспетчер
 bot = Bot(token=BOT_TOKEN)
-dp = Dispatcher(bot, storage=MemoryStorage())
+dp = Dispatcher()
 
-# Инициализация Google Gemini API
-genai.configure(api_key=GEMINI_API_KEY)
-model = genai.GenerativeModel("gemini-pro")
+dp.include_router(dp)  # Инициализация диспетчера
 
-# Список пользователей, которые активировали бота (для автоотключения)
-active_users = {}
-INACTIVITY_LIMIT = 1800  # 30 минут
+async def get_gemini_response(prompt: str) -> str:
+    """Отправляет запрос в Gemini API и возвращает ответ"""
+    payload = {"prompt": {"text": prompt}, "temperature": 0.7}
+    params = {"key": GEMINI_API_KEY}
+    
+    async with aiohttp.ClientSession() as session:
+        async with session.post(GEMINI_API_URL, json=payload, params=params) as response:
+            if response.status == 200:
+                data = await response.json()
+                return data.get("candidates", [{}])[0].get("output", "Ошибка: пустой ответ от нейросети")
+            else:
+                return f"Ошибка API: {response.status}"
 
+@dp.message(CommandStart())
+async def start_handler(message: Message):
+    await message.answer("Привет! Отправь мне любое сообщение, и я передам его нейросети.")
 
-# Функция для проверки активности пользователей
-async def check_activity():
-    while True:
-        current_time = time.time()
-        for user_id in list(active_users.keys()):
-            if current_time - active_users[user_id] > INACTIVITY_LIMIT:
-                await bot.send_message(user_id, "Бот выключается из-за бездействия. Напишите команду, чтобы снова запустить его.")
-                del active_users[user_id]
-        await asyncio.sleep(60)
+@dp.message()
+async def chat_handler(message: Message):
+    user_text = message.text
+    response = await get_gemini_response(user_text)
+    await message.answer(response)
 
+async def main():
+    await dp.start_polling(bot)
 
-# Главное меню
-def main_menu():
-    keyboard = ReplyKeyboardMarkup(resize_keyboard=True)
-    keyboard.add(KeyboardButton("🔍 Анализ профиля"), KeyboardButton("🎮 Помощь с пиком"))
-    return keyboard
-
-
-# Получение данных о профиле через OpenDota API
-def get_player_data(steam_id):
-    url = f"https://api.opendota.com/api/players/{steam_id}?api_key={OPENDOTA_API_KEY}"
-    response = requests.get(url)
-    if response.status_code == 200:
-        return response.json()
-    return None
-
-
-# Анализ винрейта героев
-def get_winrate_heroes(steam_id, top=True):
-    url = f"https://api.opendota.com/api/players/{steam_id}/heroes?api_key={OPENDOTA_API_KEY}"
-    response = requests.get(url)
-    if response.status_code == 200:
-        heroes = response.json()
-        sorted_heroes = sorted(heroes, key=lambda x: x["win"] / x["games"], reverse=top)
-        return sorted_heroes[:5]
-    return None
-
-
-# Функция взаимодействия с Google Gemini API
-def ask_gemini(prompt):
-    response = model.generate_content(prompt)
-    return response.text
-
-
-# Обработчик команд
-@dp.message_handler(commands=["start"])
-async def start(message: types.Message):
-    user_id = message.from_user.id
-    active_users[user_id] = time.time()
-    await message.answer("Привет! Я Dota 2 бот с нейросетью. Чем могу помочь?", reply_markup=main_menu())
-
-
-# Обработчик сообщений
-@dp.message_handler(content_types=types.ContentType.TEXT)
-async def handle_message(message: types.Message):
-    user_id = message.from_user.id
-    active_users[user_id] = time.time()
-
-    user_text = message.text.lower()
-
-    # Обрабатываем запрос через Google Gemini
-    response = ask_gemini(f"Пользователь спрашивает: {user_text}. Какая команда ему нужна?")
-
-    if "анализ профиля" in response:
-        await message.answer("Введите ваш Steam ID:")
-    elif "помощь с пиком" in response:
-        await message.answer("Введите выбранных героев и вашу роль:")
-    elif "лучшие герои" in response:
-        await message.answer("Введите ваш Steam ID, чтобы узнать 5 лучших героев по винрейту.")
-    elif "худшие герои" in response:
-        await message.answer("Введите ваш Steam ID, чтобы узнать 5 худших героев по винрейту.")
-    elif "текущая мета" in response:
-        await message.answer("Укажите позицию, и я покажу 10 лучших героев на ней.")
-    else:
-        await message.answer("Не понял ваш запрос. Попробуйте переформулировать.")
-
-
-# Запуск проверки активности
-async def on_startup(dp):
-    asyncio.create_task(check_activity())
-
-
-# Запуск бота
 if __name__ == "__main__":
-    executor.start_polling(dp, on_startup=on_startup)
+    asyncio.run(main())
