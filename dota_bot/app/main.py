@@ -1,53 +1,27 @@
-### Стартовая структура проекта и базовая инициализация
-
-# app/__init__.py
-# Пустой, просто для импорта как пакета
-
-# app/config.py
-from dotenv import load_dotenv
-import os
-
-load_dotenv()
-
-class Config:
-    BOT_TOKEN = os.getenv("BOT_TOKEN")
-    ADMIN_IDS = list(map(int, os.getenv("ADMIN_IDS", "").split(",")))
-    DATABASE_URL = os.getenv("DATABASE_URL")
-    GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
-    OPEN_DOTA_API = os.getenv("OPEN_DOTA_API")
-    STRATZ_API = os.getenv("STRATZ_API")
-
-config = Config()
-
-
-# app/main.py
 import asyncio
+import logging
 from aiogram import Bot, Dispatcher
-from aiogram.types import BotCommand
-from app.config import config
-from app.handlers import register_handlers
-from app.db.base import init_db
+from core.config import settings
+from core.handlers import setup_handlers
+from core.db.session import async_session
+from core.utils.commands import set_bot_commands
 
 
 async def main():
-    bot = Bot(token=config.BOT_TOKEN)
+    logging.basicConfig(level=logging.INFO)
+
+    bot = Bot(token=settings.BOT_TOKEN, parse_mode="HTML")
     dp = Dispatcher()
 
-    # Инициализация базы данных
-    await init_db()
+    await set_bot_commands(bot)
+    setup_handlers(dp)
 
-    # Регистрация хендлеров
-    register_handlers(dp)
-
-    # Команды бота
-    await bot.set_my_commands([
-        BotCommand(command="start", description="Запуск бота"),
-        BotCommand(command="menu", description="Главное меню"),
-    ])
-
-    print("Бот запущен!")
-    await dp.start_polling(bot)
+    try:
+        await dp.start_polling(bot)
+    finally:
+        await bot.session.close()
+        await async_session.close()
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     asyncio.run(main())
